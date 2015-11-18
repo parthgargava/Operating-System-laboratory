@@ -1,0 +1,598 @@
+Booting Process
+
+Introduction
+
+When a computer starts up (obviously by pressing the power button), the first thing that occurs is it sending a signal to motherboard which in turn starts the power supply. After supplying the correct amount of power to each device, it sends a signal called "Power OK" to BIOS which resides on motherboard.
+Once the BIOS receive the "Power OK" signal, it starts the booting process by first initializing a process called POST (Power On Self Test). POST first check that every device has right amount of power and then it check whether the memory is not corrupted. Then it initializes each device and finally it gives control to BIOS for further booting.
+Now the final process of booting begins. For this the BIOS first find 512 bytes of image called MBR (Master Boot Record) or Bootsector from the floppy disk or hard disk which is used for booting. The priority of boot devices is set by the user in BIOS setting. The normal priority is floppy disk first, then hard disk.
+Once BIOS finds the bootsector it loads the image in memory and executes it. If a valid bootsector is not found, BIOS checks for next drive in boot sequence until it finds valid bootsector. If BIOS fails to get valid bootsector, generally it stops the execution and gives an error message "Disk boot failure".
+It is bootsector’s responsibility to load the operating system in memory and execute it.
+Master Boot Record
+A device is "bootable" if it carries a boot sector with the byte sequence 0x55, 0xAA in bytes 511 and 512 respectively. When the BIOS finds such a boot sector, it is loaded into memory at a specific location; this is usually 0x0000:0x7c00 (segment 0, address 0x7c00). However, some BIOS' load to 0x7c0:0x0000 (segment 0x07c0, offset 0), which resolves to the same physical address, but can be surprising.
+When the wrong CS:IP pair is assumed, absolute near jumps will not work properly, and any code like mov ax,cs; mov ds,ax will result in unexpected variable locations. A good practice is to enforce CS:IP at the very start of your boot sector.
+ORG 0x7C00
+jmp 0x0000:start
+start:
+or 
+ORG 0
+jmp 0x07C0:start
+start:
+On a hard drive, the so-called Master Boot Record (MBR) holds executable code at offset 0x0000 - 0x01bd, followed by table entries for the four primary partitions, using sixteen bytes per entry (0x01be - 0x01fd), and the two-byte signature (0x01fe - 0x01ff). 
+The layout of the table entries is as follows: 
+Offset 	Size (bytes) 	Description 
+0x00 	1 	Boot Indicator (0x80=bootable, 0x00=not bootable) 
+0x01 	1 	Starting Head Number 
+0x02 	2 	Starting Cylinder Number (10 bits) and Sector (6 bits) 
+0x04 	1 	Descriptor (Type of partition/filesystem) 
+0x05 	1 	Ending Head Number 
+0x06 	2 	Ending Cylinder and Sector numbers 
+0x08 	4 	Starting Sector (relative to begining of disk) 
+0x0C 	4 	Number of Sectors in partition 
+
+Kernel Image
+Now we jump two steps ahead and look at where we want to go: Our kernel image. Your boot record would be easiest if it could just copy the kernel image from disk to memory and jump to some given offset. Unfortunately, unless you take extra precautions, your compiler adds all sort of startup code, relocation tables etc. To get a "flat binary" that can be loaded in this simple copy-and-run way, you have to tell GCC:
+gcc -c my_kernel.c
+ld my_kernel.o -o kernel.bin --oformat=binary -Ttext=0x100000
+The -c switch tells GCC to stop right after compilation, i.e. not to link the object file. 
+The --oformat=binary switch tells the linker you want your output file to be a plain binary image (no startup code, no relocations, ...)
+The -Ttext=0x100000 tells the linker you want your "text" (code segment) address to start at the 1mb memory mark. Since you do not link in any relocation tables, the linker has to resolve all references at link time, and has to know where the executable will be loaded to.
+You are of course obliged to load your kernel image to the correct offset, or the references the linker did set up will be invalid.
+System Boot Sequence
+The system BIOS is what starts the computer running when you turn it on. The following are the steps that a typical boot sequence involves. Of course this will vary by the manufacturer of your hardware, BIOS, etc., and especially by what peripherals you have in the PC. Here is what generally happens when you turn on your system power: 
+1.	The internal power supply turns on and initializes. The power supply takes some time until it can generate reliable power for the rest of the computer, and having it turn on prematurely could potentially lead to damage. Therefore, the chipset will generate a reset signal to the processor (the same as if you held the reset button down for a while on your case) until it receives the Power Good signal from the power supply. 
+2.	When the reset button is released, the processor will be ready to start executing. When the processor first starts up, it is suffering from amnesia; there is nothing at all in the memory to execute. Of course processor makers know this will happen, so they pre-program the processor to always look at the same place in the system BIOS ROM for the start of the BIOS boot program. This is normally location FFFF0h, right at the end of the system memory. They put it there so that the size of the ROM can be changed without creating compatibility problems. Since there are only 16 bytes left from there to the end of conventional memory, this location just contains a "jump" instruction telling the processor where to go to find the real BIOS startup program. 
+3.	The BIOS performs the power-on self test (POST). If there are any fatal errors, the boot process stops. POST beep codes can be found in this area of the Troubleshooting Expert. 
+4.	The BIOS looks for the video card. In particular, it looks for the video card's built in BIOS program and runs it. This BIOS is normally found at location C000h in memory. The system BIOS executes the video card BIOS, which initializes the video card. Most modern cards will display information on the screen about the video card. (This is why on a modern PC you usually see something on the screen about the video card before you see the messages from the system BIOS itself). 
+5.	The BIOS then looks for other devices' ROMs to see if any of them have BIOSes. Normally, the IDE/ATA hard disk BIOS will be found at C8000h and executed. If any other device BIOSes are found, they are executed as well. 
+6.	The BIOS displays its startup screen. 
+7.	The BIOS does more tests on the system, including the memory count-up test which you see on the screen. The BIOS will generally display a text error message on the screen if it encounters an error at this point; these error messages and their explanations can be found in this part of the Troubleshooting Expert. 
+8.	The BIOS performs a "system inventory" of sorts, doing more tests to determine what sort of hardware is in the system. Modern BIOSes have many automatic settings and will determine memory timing (for example) based on what kind of memory it finds. Many BIOSes can also dynamically set hard drive parameters and access modes, and will determine these at roughly this time. Some will display a message on the screen for each drive they detect and configure this way. The BIOS will also now search for and label logical devices (COM and LPT ports). 
+9.	If the BIOS supports the Plug and Play standard, it will detect and configure Plug and Play devices at this time and display a message on the screen for each one it finds. See here for more details on how PnP detects devices and assigns resources. 
+10.	The BIOS will display a summary screen about your system's configuration. Checking this page of data can be helpful in diagnosing setup problems, although it can be hard to see because sometimes it flashes on the screen very quickly before scrolling off the top. 
+11.	The BIOS begins the search for a drive to boot from. Most modern BIOSes contain a setting that controls if the system should first try to boot from the floppy disk (A:) or first try the hard disk (C:). Some BIOSes will even let you boot from your CD-ROM drive or other devices, depending on the boot sequence BIOS setting. 
+12.	Having identified its target boot drive, the BIOS looks for boot information to start the operating system boot process. If it is searching a hard disk, it looks for a master boot record at cylinder 0, head 0, sector 1 (the first sector on the disk); if it is searching a floppy disk, it looks at the same address on the floppy disk for a volume boot sector. 
+13.	If it finds what it is looking for, the BIOS starts the process of booting the operating system, using the information in the boot sector. At this point, the code in the boot sector takes over from the BIOS. The DOS boot process is described in detail here. If the first device that the system tries (floppy, hard disk, etc.) is not found, the BIOS will then try the next device in the boot sequence, and continue until it finds a bootable device. 
+14.	If no boot device at all can be found, the system will normally display an error message and then freeze up the system. What the error message is depends entirely on the BIOS, and can be anything from the rather clear "No boot device available" to the very cryptic "NO ROM BASIC - SYSTEM HALTED". This will also happen if you have a bootable hard disk partition but forget to set it active. 
+This process is called a "cold boot" (since the machine was off, or cold, when it started). A "warm boot" is the same thing except it occurs when the machine is rebooted using {Ctrl}+{Alt}+{Delete} or similar. In this case the POST is skipped and the boot process continues roughly at step 8 above.
+BIOS Power-On Self Test (POST)
+The first thing that the BIOS does when it boots the PC is to perform what is called the Power-On Self-Test, or POST for short. The POST is a built-in diagnostic program that checks your hardware to ensure that everything is present and functioning properly, before the BIOS begins the actual boot. It later continues with additional tests (such as the memory test that you see printed on the screen) as the boot process is proceeding.
+The POST runs very quickly, and you will normally not even noticed that it is happening--unless it finds a problem (amazing how many things are like that, isn't it?) You may have encountered a PC that, when turned on, made beeping sounds and then stopped without booting up. That is the POST telling you something is wrong with the machine. The speaker is used because this test happens so early on, that the video isn't even activated yet! These beep patterns can be used to diagnose many hardware problems with your PC. The exact patterns depend on the maker of the BIOS; the most common are Award and AMI BIOSes. This part of the Troubleshooting Expert will help you figure out what the POST beep codes mean and what to do about them, if you are having this problem.
+Note: Some POST errors are considered "fatal" while others are not. A fatal error means that it will halt the boot process immediately (an example would be if no system memory at all is found). In fact, most POST boot errors are fatal, since the POST is testing vital system components.
+ Many people don't realize that the POST also uses extended troubleshooting codes that you can use to get much more detail on what problem a troublesome PC is having. You can purchase a special debugging card that goes into an ISA slot and accepts the debugging codes that the BIOS sends to a special I/O address, usually 80h. The card displays these codes and this lets you see where the POST stops, if it finds a problem. These cards are obviously only for the serious PC repairperson or someone who does a lot of work on systems.
+BIOS Startup Screen
+When the system 
+BIOS starts up, you will see its familiar screen display, normally after the video adapter displays its information. These are the contents of a typical BIOS start up screen: 
+•	The BIOS Manufacturer and Version Number. 
+•	The BIOS Date: The date of the BIOS can be important in helping you determine its capabilities, since the "magic dates" of some features are fairly well known. 
+•	Setup Program Key: The key or keys to press to enter the BIOS setup program. (This is usually {Del}, sometimes {F2}, and sometimes another key combination. 
+•	System Logo: The logo of the BIOS company, or in some cases the PC maker or motherboard manufacturer. 
+•	The "Energy Star" Logo: This distinctive logo is displayed if the BIOS supports the Energy Star standard, which almost all newer ones do. 
+•	The BIOS Serial Number: This is normally located at the bottom of the screen. Since BIOSes are highly customized to the particular motherboard, this serial number can be used in many cases to determine the specific motherboard and BIOS version you are using. Check out Wim Bervoets' BIOS site for a huge list of these numbers. 
+Windows XP Boot Sequence
+How a Computer Starts Its Day 
+Ever wonder what happens from the time you turn your computer on until you see the Windows login screen? 
+
+When you hit the power button on your computer a whole lot of stuff happens. We call this the boot process. In the days when I first started using computers there was literally a "boot disk", a floppy (5.25" not a 3.5") disk that told the system where to go and what to do so that the operating system would start up. Since then the boot sequence has become somewhat more complicated. So let me take you thru the steps the computer takes to get started. For my example I'm going to use a Windows XP system.
+1.	First is the POST, this stands for Power On Self Test, for the computer. This process tests memory as well as a number of other subsystems. You can usually monitor this as it runs each test. After that is complete the system will run POST for any device that has a BIOS (Basic Input-Output System). An AGP has its own BIOS, as do some network cards and various other devices. 
+2.	Once the POST is complete and the BIOS is sure that everything is working properly, the BIOS will then attempt to read the MBR (Master Boot Record). This is the first sector of the first hard drive (called the Master or HD0). When the MBR takes over it means that Windows is now in control. 
+3.	The MBR looks at the BOOT SECTOR (the first sector of the active partition). That is where NTLDR is located, NTLDR is the BOOT LOADER for Windows XP. NTLDR will allow memory addressing, initiate the file system, read the boot.ini and load the boot menu. NTLDR has to be in the root of the active partition as do NTDETECT.COM, BOOT.INI, BOOTSECT.DOS (for multi-OS booting) and NTBOOTDD.SYS (if you have SCSI adapters) 
+4.	Once XP is selected from the Boot Menu, NTLDR will run NTDETECT.COM, BOOT.INI and BOOTSECT.DOS to get the proper OS selected and loaded. The system starts in 16-bit real mode and then moves into 32-bit protected mode. 
+5.	NTLDR will then load NTOSKRNL.EXE and HAL.DLL. Effectively, these two files are windows XP. They must be located in %SystemRoot%System32. 
+6.	NTLDR reads the registry, chooses a hardware profile and authorizes device drivers, in that exact order. 
+7.	At this point NTOSKRNL.EXE takes over. It starts WINLOGON.EXE that in turn starts LSASS.EXE, this is the program that display the Logon screen so that you can logon.
+The Linux Boot Process
+or 
+What happens before the login prompt 
+Presented by Kim Oldfield to the Linux Users of Victoria on 7 November 2001. 
+This talk is based on an earlier talk presented to LUV. 
+Note: many links on this page point to files on your local file system. If you are not running Linux then they probably will not work. There are also links to man pages. These work in konqueror, and may or may not work with other browsers. If the link does not work just use the man command from a Linux command line. 
+________________________________________
+Boot sequence summary
+•	BIOS 
+•	Master Boot Record (MBR) 
+•	LILO or GRUB 
+•	Kernel 
+•	init 
+•	Run Levels 
+________________________________________
+BIOS
+Load boot sector from one of: 
+•	Floppy 
+•	CDROM 
+•	Hard drive 
+The boot order can be changed from within the BIOS. BIOS setup can be entered by pressing a key during bootup. The exact key depends varies, but is often one of Del, F1, F2, or F10. 
+________________________________________
+(DOS) Master Boot Record (MBR)
+DOS in the context includes MS-DOS, Win95, and Win98. 
+•	BIOS loads and execute the first 512 bytes off the disk (/dev/hda) 
+•	Standard DOS MBR will: 
+o	look for a primary partition (/dev/hda1-4) marked bootable 
+o	load and execute first 512 bytes of this partition 
+•	can be restored with fdisk /mbr from DOS 
+________________________________________
+LILO
+•	does not understand filesystems 
+•	code and kernel image to be loaded is stored as raw disk offsets 
+•	uses the BIOS routines to load 
+Loading sequence 
+•	load menu code, typically /boot/boot.b 
+•	prompt for (or timeout to default) partition or kernel 
+•	for "image=" (ie Linux) option load kernel image 
+•	for "other=" (ie DOS) option load first 512 bytes of the partition 
+________________________________________
+Reconfiguring LILO
+One minute guide to installing a new kernel 
+•	copy kernel image (bzImage) and modules to /boot and /lib/modules 
+•	edit /etc/lilo.conf 
+o	duplicate image= section, eg: 
+o	
+      image=/bzImage-2.4.14
+o	
+        label=14
+o	
+        read-only
+o	man lilo.conf for details 
+•	run /sbin/lilo 
+•	reboot to test 
+________________________________________
+GRUB
+•	Understands file systems 
+•	config lives in /boot/grub/menu.lst or /boot/boot/menu.lst 
+________________________________________
+Kernel
+•	initialise devices 
+•	(optionally loads initrd, see below) 
+•	mounts root filesystem 
+o	specified by lilo or loadin with root= parameter 
+o	kernel prints: VFS: Mounted root (ext2 filesystem) readonly. 
+•	runs /sbin/init which is process number 1 (PID=1) 
+o	init prints: INIT: version 2.76 booting 
+o	can be changed with boot= parameter to lilo, eg boot=/bin/sh can be useful to rescue a system which is having trouble booting. 
+________________________________________
+initrd
+Allows setup to be performed before root FS is mounted 
+•	lilo or loadlin loads ram disk image 
+•	kernel runs /linuxrc 
+o	load modules 
+o	initialise devices 
+o	/linuxrc exits 
+•	"real" root is mounted 
+•	kernel runs /sbin/init 
+Details in /usr/src/linux/Documentation/initrd.txt (part of the kernel source). 
+________________________________________
+/sbin/init
+•	reads /etc/inittab (see man inittab which specifies the scripts below 
+o	Run boot scripts: 
+	debian: run /etc/init.d/rcS which runs: 
+	/etc/rcS.d/S* scripts 
+	/etc/rc.boot/* (depreciated) 
+	redhat: /etc/rc.d/rc.sysinit script which: loads modules, check root FS and mount RW, mount local FS, setup network, and mount remote FS 
+o	switches to default runlevel eg 3. 
+	run scripts /etc/rc3.d/S* 
+	run programs specified in /etc/inittab 
+________________________________________
+Run Levels
+•	0 halt 
+•	1 single user 
+•	2-4 user defined 
+•	5 X11 only (0 or 1 text console) 
+•	6 Reboot 
+•	Default is defined in /etc/inittab, eg: 
+o	id:3:initdefault: 
+•	The current runlevel can be changed by running /sbin/telinit # where # is the new runlevel, eg typing telinit 6 will reboot. 
+________________________________________
+Run Level programs
+•	Scripts in /etc/rc*.d/* are symlinks to /etc/init.d 
+o	Scripts prefixed with S will be started when the runlevel is entered, eg /etc/rc5.d/S99xdm 
+o	Scripts prefixed with K will be killed when the runlevel is entered, eg /etc/rc6.d/K20apache 
+o	X11 login screen is typically started by one of S99xdm, S99kdm, or S99gdm. 
+•	Run programs for specified run level 
+•	/etc/inittab lines: 
+o	1:2345:respawn:/sbin/getty 9600 tty1 
+	Always running in runlevels 2, 3, 4, or 5 
+	Displays login on console (tty1) 
+o	2:234:respawn:/sbin/getty 9600 tty2 
+	Always running in runlevels 2, 3, or 4 
+	Displays login on console (tty2) 
+o	l3:3:wait:/etc/init.d/rc 3 
+	Run once when switching to runlevel 3. 
+	Uses scripts stored in /etc/rc3.d/ 
+o	ca:12345:ctrlaltdel:/sbin/shutdown -t1 -a -r now 
+	Run when control-alt-delete is pressed 
+________________________________________
+Boot Summary
+•	lilo 
+o	/etc/lilo.conf 
+•	debian runs 
+o	/etc/rcS.d/S* scripts 
+o	/etc/rc3.d/S* scripts 
+•	redhat runs 
+o	/etc/rc.d/rc.sysinit script 
+o	/etc/rc.d/rc3.d/S* scripts 
+1.2. A Detailed Look at the Boot Process
+The beginning of the boot process varies depending on the hardware platform being used. However, once the kernel is found and loaded by the boot loader, the default boot process is identical across all architectures. This chapter focuses on the x86 architecture. 
+1.2.1. The BIOS
+When an x86 computer is booted, the processor looks at the end of system memory for the Basic Input/Output System or BIOS program and runs it. The BIOS controls not only the first step of the boot process, but also provides the lowest level interface to peripheral devices. For this reason it is written into read-only, permanent memory and is always available for use. 
+Other platforms use different programs to perform low-level tasks roughly equivalent to those of the BIOS on an x86 system. For instance, Itanium-based computers use the Extensible Firmware Interface (EFI) Shell, while Alpha systems use the SRM console. 
+Once loaded, the BIOS tests the system, looks for and checks peripherals, and then locates a valid device with which to boot the system. Usually, it checks any diskette drives and CD-ROM drives present for bootable media, then, failing that, looks to the system's hard drives. In most cases, the order of the drives searched while booting is controlled with a setting in BIOS, and it looks on the master IDE device on the primary IDE bus. The BIOS then loads into memory whatever program is residing in the first sector of this device, called the Master Boot Record or MBR. The MBR is only 512 bytes in size and contains machine code instructions for booting the machine, called a boot loader, along with the partition table. Once the BIOS finds and loads the boot loader program into memory, it yields control of the boot process to it. 
+1.2.2. The Boot Loader
+This section looks at the boot loaders for the x86 platform. Depending on the system's architecture, the boot process may differ slightly. Please see Section 1.2.2.1 Boot Loaders for Other Architectures for a brief overview of non-x86 boot loaders. 
+Under Red Hat Linux two boot loaders are available: GRUB or LILO. GRUB is the default boot loader, but LILO is available for those who require or prefer it. For more information about configuring and using GRUB or LILO, see Chapter 2 Boot Loaders. 
+Both boot loaders for the x86 platform are broken into at least two stages. The first stage is a small machine code binary on the MBR. Its sole job is to locate the second stage boot loader and load the first part of it into memory. 
+GRUB is the newer boot loader and has the advantage of being able read ext2 and ext3 [1] partitions and load its configuration file — /boot/grub/grub.conf — at boot time. See Section 2.7 GRUB Menu Configuration File for information on how to edit this file. 
+With LILO, the second stage boot loader uses information on the MBR to determine the boot options available to the user. This means that any time a configuration change is made or kernel is manually upgraded, the /sbin/lilo -v -v command must be executed to write the appropriate information to the MBR. For details on doing this, see Section 2.8 LILO. 
+ 
+Tip
+ 	If upgrading the kernel using the Red Hat Update Agent, the boot loader configuration file is updated automatically. More information on Red Hat Network can be found online at the following URL: https://rhn.redhat.com. 
+
+Once the second stage boot loader is in memory, it presents the user with the Red Hat Linux initial, graphical screen showing the different operating systems or kernels it has been configured to boot. On this screen a user can use the arrow keys to choose which operating system or kernel they wish to boot and press [Enter]. If no key is pressed, the boot loader will load the default selection after a configurable period of time has passed. 
+ 
+Note
+ 	If Symmetric Multi-Processor (SMP) kernel support is installed, there will be more than one option present the first time the system is booted. In this situation, LILO will display linux, which is the SMP kernel, and linux-up, which is for single processors. GRUB displays Red Hat Linux (<kernel-version>-smp), which is the SMP kernel, and Red Hat Linux (<kernel-version>), which is for single processors. 
+If any problems occur using the SMP kernel, try selecting the a non-SMP kernel upon rebooting. 
+Once the second stage boot loader has determined which kernel to boot, it locates the corresponding kernel binary in the /boot/ directory. The kernel binary is named using the following format — /boot/vmlinuz-<kernel-version> file (where <kernel-version> corresponds to the kernel version specified in the boot loader's settings). 
+For instructions on using the boot loader to supply command line arguments to the kernel, see Chapter 2 Boot Loaders. For information on changing the runlevel at the GRUB or LILO prompt, see Section 2.10 Changing Runlevels at Boot Time. 
+The boot loader then places the appropriate initial RAM disk image, called an initrd, into memory. The initrd is used by the kernel to load drivers necessary to boot the system. This is particularly important if SCSI hard drives are present or if the systems uses the ext3 file system [2]. 
+ 
+Warning
+ 	Do not remove the /initrd/ directory from the file system for any reason. Removing this directory will cause the system to fail with a kernel panic error message at boot time. 
+Once the kernel and the initrd image are loaded into memory, the boot loader hands control of the boot process to the kernel. 
+For a more detailed overview of the GRUB and LILO boot loaders, see Chapter 2 Boot Loaders. 
+1.2.2.1. Boot Loaders for Other Architectures
+Once the Red Hat Linux kernel loads and hands off the boot process to the init command, the same sequence of events occurs on every architecture. So the main difference between each architecture's boot process is in the application used to find and load the kernel. 
+For example, the Alpha architecture uses the aboot boot loader, while the Itanium architecture uses the ELILO boot loader. 
+Consult the Red Hat Linux Installation Guide specific to these platforms for information on configuring their boot loaders. 
+1.2.3. The Kernel
+When the kernel is loaded, it immediately initializes and configures the computer's memory and configures the various hardware attached to the system, including all processors, I/O subsystems, and storage devices. It then looks for the compressed initrd image in a predetermined location in memory, decompresses it, mounts it, and loads all necessary drivers. Next, it initializes virtual devices related to the file system, such as LVM or software RAID before unmounting the initrd disk image and freeing up all the memory the disk image once occupied. 
+The kernel then creates a root device, mounts the root partition read-only, and frees any unused memory. 
+At this point, the kernel is loaded into memory and operational. However, since there are no user applications that allow meaningful input to the system, not much can be done with it. 
+In order to set up the user environment, the kernel executes the /sbin/init program. 
+1.2.4. The /sbin/init Program
+The /sbin/init program (also called init) coordinates the rest of the boot process and configures the environment for the user. 
+When the init command starts, it becomes the parent or grandparent of all of the processes that start up automatically on a Red Hat Linux system. First, it runs the /etc/rc.d/rc.sysinit script, which sets the environment path, starts swap, checks the file systems, and takes care of everything the system needs to have done at system initialization. For example, most systems use a clock, so on them rc.sysinit reads the /etc/sysconfig/clock configuration file to initialize the hardware clock. Another example is if there are special serial port processes which must be initialized, rc.sysinit will execute the /etc/rc.serial file. 
+The init command then runs the /etc/inittab script, which describes how the system should be set up in each SysV init runlevel [3]. Among other things, the /etc/inittab sets the default runlevel and dictates that /sbin/update should be run whenever it starts a given runlevel [4]. 
+Next, the init command sets the source function library, /etc/rc.d/init.d/functions, for the system. This spells out how to start or kill a program and how to determine the PID of a program. 
+The init program starts all of the background processes by looking in the appropriate rc directory for the runlevel specified as default in /etc/inittab. The rc directories are numbered to corresponds to the runlevel they represent. For instance, /etc/rc.d/rc5.d/ is the directory for runlevel 5. 
+When booting to runlevel 5, the init program looks in the /etc/rc.d/rc5.d/ directory to determine which processes to start and stop. 
+Below is an example listing of the /etc/rc.d/rc5.d/ directory: 
+K05innd -> ../init.d/innd
+K05saslauthd -> ../init.d/saslauthd
+K10psacct -> ../init.d/psacct
+K12cWnn -> ../init.d/cWnn
+K12FreeWnn -> ../init.d/FreeWnn
+K12kWnn -> ../init.d/kWnn
+K12mysqld -> ../init.d/mysqld
+K12tWnn -> ../init.d/tWnn
+K15httpd -> ../init.d/httpd
+K15postgresql -> ../init.d/postgresql
+K16rarpd -> ../init.d/rarpd
+K20bootparamd -> ../init.d/bootparamd
+K20iscsi -> ../init.d/iscsi
+K20netdump-server -> ../init.d/netdump-server
+K20nfs -> ../init.d/nfs
+K20rstatd -> ../init.d/rstatd
+K20rusersd -> ../init.d/rusersd
+K20rwalld -> ../init.d/rwalld
+K20rwhod -> ../init.d/rwhod
+K24irda -> ../init.d/irda
+K25squid -> ../init.d/squid
+K28amd -> ../init.d/amd
+K34dhcrelay -> ../init.d/dhcrelay
+K34yppasswdd -> ../init.d/yppasswdd
+K35atalk -> ../init.d/atalk
+K35dhcpd -> ../init.d/dhcpd
+K35smb -> ../init.d/smb
+K35vncserver -> ../init.d/vncserver
+K35winbind -> ../init.d/winbind
+K40mars-nwe -> ../init.d/mars-nwe
+K45arpwatch -> ../init.d/arpwatch
+K45named -> ../init.d/named
+K45smartd -> ../init.d/smartd
+K46radvd -> ../init.d/radvd
+K50netdump -> ../init.d/netdump
+K50snmpd -> ../init.d/snmpd
+K50snmptrapd -> ../init.d/snmptrapd
+K50tux -> ../init.d/tux
+K54pxe -> ../init.d/pxe
+K55routed -> ../init.d/routed
+K61ldap -> ../init.d/ldap
+K65identd -> ../init.d/identd
+K65kadmin -> ../init.d/kadmin
+K65kprop -> ../init.d/kprop
+K65krb524 -> ../init.d/krb524
+K65krb5kdc -> ../init.d/krb5kdc
+K70aep1000 -> ../init.d/aep1000
+K70bcm5820 -> ../init.d/bcm5820
+K74ntpd -> ../init.d/ntpd
+K74ups -> ../init.d/ups
+K74ypserv -> ../init.d/ypserv
+K74ypxfrd -> ../init.d/ypxfrd
+K84bgpd -> ../init.d/bgpd
+K84ospf6d -> ../init.d/ospf6d
+K84ospfd -> ../init.d/ospfd
+K84ripd -> ../init.d/ripd
+K84ripngd -> ../init.d/ripngd
+K85zebra -> ../init.d/zebra
+K90isicom -> ../init.d/isicom
+K92ipvsadm -> ../init.d/ipvsadm
+K95firstboot -> ../init.d/firstboot
+S00microcode_ctl -> ../init.d/microcode_ctl
+S05kudzu -> ../init.d/kudzu
+S08ip6tables -> ../init.d/ip6tables
+S08ipchains -> ../init.d/ipchains
+S08iptables -> ../init.d/iptables
+S09isdn -> ../init.d/isdn
+S10network -> ../init.d/network
+S12syslog -> ../init.d/syslog
+S13portmap -> ../init.d/portmap
+S14nfslock -> ../init.d/nfslock
+S17keytable -> ../init.d/keytable
+S20random -> ../init.d/random
+S24pcmcia -> ../init.d/pcmcia
+S25netfs -> ../init.d/netfs
+S26apmd -> ../init.d/apmd
+S28autofs -> ../init.d/autofs
+S44acpid -> ../init.d/acpid
+S55sshd -> ../init.d/sshd
+S56rawdevices -> ../init.d/rawdevices
+S56xinetd -> ../init.d/xinetd
+S80sendmail -> ../init.d/sendmail
+S80spamassassin -> ../init.d/spamassassin
+S84privoxy -> ../init.d/privoxy
+S85gpm -> ../init.d/gpm
+S90canna -> ../init.d/canna
+S90crond -> ../init.d/crond
+S90cups -> ../init.d/cups
+S90xfs -> ../init.d/xfs
+S95anacron -> ../init.d/anacron
+S95atd -> ../init.d/atd
+S97rhnsd -> ../init.d/rhnsd
+S99local -> ../rc.local
+S99mdmonitor -> ../init.d/mdmonitor
+As illustrated in this listing, none of the scripts that actually start and stop the services are located in the /etc/rc.d/rc5.d/ directory. Rather, all of the files in /etc/rc.d/rc5.d/ are symbolic links pointing to scripts located in the /etc/rc.d/init.d/ directory. Symbolic links are used in each of the rc directories so that the runlevels can be reconfigured by creating, modifying, and deleting the symbolic links without affecting the actual scripts they reference. 
+The name of each symbolic link begin with either a K or an S. The K links are processes that are killed on that runlevel, while those beginning with an S are started. 
+The init command first stops all of the K symbolic links in the directory by issuing the /etc/rc.d/init.d/<command> stop command, where <command> is the process to be killed. It then starts all of the S symbolic links by issuing /etc/rc.d/init.d/<command> start. 
+ 
+Tip
+ 	After the system is finished booting, it is possible to log in as root and execute these same scripts to start and stop services. For instance, the command /etc/rc.d/init.d/httpd stop will stop the Apache Web server. 
+Each of the symbolic links are numbered to dictate start order. The order in which the services are started or stopped can be altered by changing this number. The lower the number, the earlier it is started. Those symbolic links with the same number are started alphabetically. 
+ 
+Note
+ 	One of the last things the init program executes is the /etc/rc.d/rc.local file. This file is useful for system customization. See Section 1.3 Running Additional Programs at Boot Time for more on using the rc.local file. 
+After the init command has progressed through the appropriate rc directory for the runlevel, the /etc/inittab script forks a /sbin/mingetty process for each virtual console (login prompts) allocated to the runlevel. Runlevels 2 through 5 get all six virtual consoles, while runlevel 1 (single user mode) gets only one and runlevels 0 and 6 get none. The /sbin/mingetty process opens communication pathways to tty devices [5], sets their modes, prints the login prompt, gets the user name, and initiates the login process for the user. 
+In runlevel 5, the /etc/inittab runs a script called /etc/X11/prefdm. The prefdm script executes the preferred X display manager — gdm, kdm, or xdm, depending on the contents of the /etc/sysconfig/desktop file. 
+At this point, the system is operating on runlevel 5 and displaying a login screen. 
+Notes
+[1]
+GRUB reads ext3 file systems as ext2, disregarding the journal file. See the chapter titled The ext3 File System in the Red Hat Linux Customization Guide for more information on the ext3 file system. 
+[2]
+For details on making an initrd, see the chapter titled The ext3 File System in the Red Hat Linux Customization Guide. 
+[3]
+For more information on SysV init runlevels, see Section 1.4 SysV Init Runlevels. 
+
+[4]
+The update command is used to flush dirty buffers back to disk. 
+[5]
+See Section 5.3.11 /proc/tty/ for more information on tty devices
+
+
+Inside the Linux boot process
+Take a guided tour from the Master Boot Record to the first user-space application
+M. Tim Jones, Consultant Engineer, Emulex
+Summary:  The process of booting a Linux® system consists of a number of stages. But whether you're booting a standard x86 desktop or a deeply embedded PowerPC® target, much of the flow is surprisingly similar. This article explores the Linux boot process from the initial bootstrap to the start of the first user-space application. Along the way, you'll learn about various other boot-related topics such as the boot loaders, kernel decompression, the initial RAM disk, and other elements of Linux boot.
+Tags for this article:  boot, bootstrapping, boottrapping, kernal, linux, process, sequence, system
+Tag this!
+Update My dW interests (Log in | What's this?) Skip to help for Update My dW interests
+Date:  31 May 2006 
+Level:  Introductory 
+Also available in:   Korean  Russian  Portuguese 
+
+Activity:  124642 views 
+Comments:   1 (View or add comments) 
+     Average rating (based on 930 votes)
+In the early days, bootstrapping a computer meant feeding a paper tape containing a boot program or manually loading a boot program using the front panel address/data/control switches. Today's computers are equipped with facilities to simplify the boot process, but that doesn't necessarily make it simple.
+Let's start with a high-level view of Linux boot so you can see the entire landscape. Then we'll review what's going on at each of the individual steps. Source references along the way will help you navigate the kernel tree and dig in further.
+Overview
+Figure 1 gives you the 20,000-foot view.
+
+Figure 1. The 20,000-foot view of the Linux boot process
+ 
+When a system is first booted, or is reset, the processor executes code at a well-known location. In a personal computer (PC), this location is in the basic input/output system (BIOS), which is stored in flash memory on the motherboard. The central processing unit (CPU) in an embedded system invokes the reset vector to start a program at a known address in flash/ROM. In either case, the result is the same. Because PCs offer so much flexibility, the BIOS must determine which devices are candidates for boot. We'll look at this in more detail later.
+When a boot device is found, the first-stage boot loader is loaded into RAM and executed. This boot loader is less than 512 bytes in length (a single sector), and its job is to load the second-stage boot loader. 
+When the second-stage boot loader is in RAM and executing, a splash screen is commonly displayed, and Linux and an optional initial RAM disk (temporary root file system) are loaded into memory. When the images are loaded, the second-stage boot loader passes control to the kernel image and the kernel is decompressed and initialized. At this stage, the second-stage boot loader checks the system hardware, enumerates the attached hardware devices, mounts the root device, and then loads the necessary kernel modules. When complete, the first user-space program (init) starts, and high-level system initialization is performed.
+That's Linux boot in a nutshell. Now let's dig in a little further and explore some of the details of the Linux boot process.
+________________________________________
+Back to top
+System startup
+The system startup stage depends on the hardware that Linux is being booted on. On an embedded platform, a bootstrap environment is used when the system is powered on, or reset. Examples include U-Boot, RedBoot, and MicroMonitor from Lucent. Embedded platforms are commonly shipped with a boot monitor. These programs reside in special region of flash memory on the target hardware and provide the means to download a Linux kernel image into flash memory and subsequently execute it. In addition to having the ability to store and boot a Linux image, these boot monitors perform some level of system test and hardware initialization. In an embedded target, these boot monitors commonly cover both the first- and second-stage boot loaders.
+Extracting the MBR
+To see the contents of your MBR, use this command:
+# dd if=/dev/hda of=mbr.bin bs=512 count=1 
+# od -xa mbr.bin 
+The dd command, which needs to be run from root, reads the first 512 bytes from /dev/hda (the first Integrated Drive Electronics, or IDE drive) and writes them to the mbr.bin file. The od command prints the binary file in hex and ASCII formats.
+In a PC, booting Linux begins in the BIOS at address 0xFFFF0. The first step of the BIOS is the power-on self test (POST). The job of the POST is to perform a check of the hardware. The second step of the BIOS is local device enumeration and initialization.
+Given the different uses of BIOS functions, the BIOS is made up of two parts: the POST code and runtime services. After the POST is complete, it is flushed from memory, but the BIOS runtime services remain and are available to the target operating system.
+To boot an operating system, the BIOS runtime searches for devices that are both active and bootable in the order of preference defined by the complementary metal oxide semiconductor (CMOS) settings. A boot device can be a floppy disk, a CD-ROM, a partition on a hard disk, a device on the network, or even a USB flash memory stick.
+Commonly, Linux is booted from a hard disk, where the Master Boot Record (MBR) contains the primary boot loader. The MBR is a 512-byte sector, located in the first sector on the disk (sector 1 of cylinder 0, head 0). After the MBR is loaded into RAM, the BIOS yields control to it.
+________________________________________
+Back to top
+Stage 1 boot loader
+The primary boot loader that resides in the MBR is a 512-byte image containing both program code and a small partition table (see Figure 2). The first 446 bytes are the primary boot loader, which contains both executable code and error message text. The next sixty-four bytes are the partition table, which contains a record for each of four partitions (sixteen bytes each). The MBR ends with two bytes that are defined as the magic number (0xAA55). The magic number serves as a validation check of the MBR.
+
+Figure 2. Anatomy of the MBR
+ 
+The job of the primary boot loader is to find and load the secondary boot loader (stage 2). It does this by looking through the partition table for an active partition. When it finds an active partition, it scans the remaining partitions in the table to ensure that they're all inactive. When this is verified, the active partition's boot record is read from the device into RAM and executed.
+________________________________________
+Back to top
+Stage 2 boot loader
+The secondary, or second-stage, boot loader could be more aptly called the kernel loader. The task at this stage is to load the Linux kernel and optional initial RAM disk.
+GRUB stage boot loaders
+The /boot/grub directory contains the stage1, stage1.5, and stage2 boot loaders, as well as a number of alternate loaders (for example, CR-ROMs use the iso9660_stage_1_5).
+The first- and second-stage boot loaders combined are called Linux Loader (LILO) or GRand Unified Bootloader (GRUB) in the x86 PC environment. Because LILO has some disadvantages that were corrected in GRUB, let's look into GRUB. (See many additional resources on GRUB, LILO, and related topics in the Resources section later in this article.)
+The great thing about GRUB is that it includes knowledge of Linux file systems. Instead of using raw sectors on the disk, as LILO does, GRUB can load a Linux kernel from an ext2 or ext3 file system. It does this by making the two-stage boot loader into a three-stage boot loader. Stage 1 (MBR) boots a stage 1.5 boot loader that understands the particular file system containing the Linux kernel image. Examples include reiserfs_stage1_5 (to load from a Reiser journaling file system) or e2fs_stage1_5 (to load from an ext2 or ext3 file system). When the stage 1.5 boot loader is loaded and running, the stage 2 boot loader can be loaded.
+With stage 2 loaded, GRUB can, upon request, display a list of available kernels (defined in /etc/grub.conf, with soft links from /etc/grub/menu.lst and /etc/grub.conf). You can select a kernel and even amend it with additional kernel parameters. Optionally, you can use a command-line shell for greater manual control over the boot process. 
+With the second-stage boot loader in memory, the file system is consulted, and the default kernel image and initrd image are loaded into memory. With the images ready, the stage 2 boot loader invokes the kernel image.
+________________________________________
+Back to top
+Kernel
+Manual boot in GRUB
+From the GRUB command-line, you can boot a specific kernel with a named initrd image as follows:
+grub> kernel /bzImage-2.6.14.2
+  [Linux-bzImage, setup=0x1400, size=0x29672e]
+
+grub> initrd /initrd-2.6.14.2.img
+  [Linux-initrd @ 0x5f13000, 0xcc199 bytes]
+
+grub> boot
+
+Uncompressing Linux... Ok, booting the kernel.
+If you don't know the name of the kernel to boot, just type a forward slash (/) and press the Tab key. GRUB will display the list of kernels and initrd images.
+With the kernel image in memory and control given from the stage 2 boot loader, the kernel stage begins. The kernel image isn't so much an executable kernel, but a compressed kernel image. Typically this is a zImage (compressed image, less than 512KB) or a bzImage (big compressed image, greater than 512KB), that has been previously compressed with zlib. At the head of this kernel image is a routine that does some minimal amount of hardware setup and then decompresses the kernel contained within the kernel image and places it into high memory. If an initial RAM disk image is present, this routine moves it into memory and notes it for later use. The routine then calls the kernel and the kernel boot begins.
+When the bzImage (for an i386 image) is invoked, you begin at ./arch/i386/boot/head.S in the start assembly routine (see Figure 3 for the major flow). This routine does some basic hardware setup and invokes the startup_32 routine in ./arch/i386/boot/compressed/head.S. This routine sets up a basic environment (stack, etc.) and clears the Block Started by Symbol (BSS). The kernel is then decompressed through a call to a C function called decompress_kernel (located in ./arch/i386/boot/compressed/misc.c). When the kernel is decompressed into memory, it is called. This is yet another startup_32 function, but this function is in ./arch/i386/kernel/head.S. 
+In the new startup_32 function (also called the swapper or process 0), the page tables are initialized and memory paging is enabled. The type of CPU is detected along with any optional floating-point unit (FPU) and stored away for later use. The start_kernel function is then invoked (init/main.c), which takes you to the non-architecture specific Linux kernel. This is, in essence, the main function for the Linux kernel.
+
+Figure 3. Major functions flow for the Linux kernel i386 boot 
+ 
+With the call to start_kernel, a long list of initialization functions are called to set up interrupts, perform further memory configuration, and load the initial RAM disk. In the end, a call is made to kernel_thread (in arch/i386/kernel/process.c) to start the init function, which is the first user-space process. Finally, the idle task is started and the scheduler can now take control (after the call to cpu_idle). With interrupts enabled, the pre-emptive scheduler periodically takes control to provide multitasking.
+During the boot of the kernel, the initial-RAM disk (initrd) that was loaded into memory by the stage 2 boot loader is copied into RAM and mounted. This initrd serves as a temporary root file system in RAM and allows the kernel to fully boot without having to mount any physical disks. Since the necessary modules needed to interface with peripherals can be part of the initrd, the kernel can be very small, but still support a large number of possible hardware configurations. After the kernel is booted, the root file system is pivoted (via pivot_root) where the initrd root file system is unmounted and the real root file system is mounted.
+decompress_kernel output
+The decompress_kernel function is where you see the usual decompression messages emitted to the display: 
+Uncompressing Linux... Ok, booting the kernel. 
+The initrd function allows you to create a small Linux kernel with drivers compiled as loadable modules. These loadable modules give the kernel the means to access disks and the file systems on those disks, as well as drivers for other hardware assets. Because the root file system is a file system on a disk, the initrd function provides a means of bootstrapping to gain access to the disk and mount the real root file system. In an embedded target without a hard disk, the initrd can be the final root file system, or the final root file system can be mounted via the Network File System (NFS).
+________________________________________
+Back to top
+Init
+After the kernel is booted and initialized, the kernel starts the first user-space application. This is the first program invoked that is compiled with the standard C library. Prior to this point in the process, no standard C applications have been executed.
+In a desktop Linux system, the first application started is commonly /sbin/init. But it need not be. Rarely do embedded systems require the extensive initialization provided by init (as configured through /etc/inittab). In many cases, you can invoke a simple shell script that starts the necessary embedded applications. 
+________________________________________
+Back to top
+Summary
+Much like Linux itself, the Linux boot process is highly flexible, supporting a huge number of processors and hardware platforms. In the beginning, the loadlin boot loader provided a simple way to boot Linux without any frills. The LILO boot loader expanded the boot capabilities, but lacked any file system awareness. The latest generation of boot loaders, such as GRUB, permits Linux to boot from a range of file systems (from Minix to Reiser). 
+
+Resources
+Learn
+•	Boot Records Revealed is a great resource on MBRs and the various boot loaders. This resource not only disassembles MBRs, but also discusses GRUB, LILO, and the various Windows® boot loaders. 
+•	Check out the Disk Geometry page to understand disks and their geometries. You'll find an interesting summary of disk attributes. 
+•	A live CD is an operating system that's bootable from a CD or DVD without needing a hard drive. 
+•	"Boot loader showdown: Getting to know LILO and GRUB" (developerWorks, August 2005) gives you a detailed look at the LILO and GRUB boot loaders. 
+•	In the Linux Professional Institute (LPI) exam prep series of developerWorks tutorials, get a comprehensive introduction to booting a Linux system and many other fundamental Linux tasks while you prepare for system administrator certification. 
+•	LILO was the precursor to GRUB, but you can still find it booting Linux. 
+•	The mkintrd command is used to create an initial RAM disk image. This command is useful for building an initial root file system for boot configuration that allows preloading of block devices needed to access the real root file system. 
+•	At the Debian Linux Kernel Project, find more information on the Linux kernel, boot, and embedded development. 
+•	In the developerWorks Linux zone, find more resources for Linux developers. 
+•	Stay current with developerWorks technical events and Webcasts. 
+Get products and technologies
+•	The MicroMonitor provides a boot environment for a variety of small target devices. You can use this monitor to boot Linux in an embedded environment. It has ports for ARM, XScale, MIPS, PowerPC, Coldfire, and Hitachi's Super-H. 
+•	GNU GRUB is a boot shell filled with options and flexibility. 
+•	LinuxBIOS is a BIOS replacement. Not only does it boot Linux, LinuxBIOS, itself, is a compressed Linux kernel. 
+•	OpenBIOS is another portable BIOS project that operates on a variety of architectures such as x86, Alpha, and AMD64. 
+•	At kernel.org, grab the latest kernel tree. 
+•	Order the SEK for Linux, a two-DVD set containing the latest IBM trial software for Linux from DB2®, Lotus®, Rational®, Tivoli®, and WebSphere®. 
+•	With IBM trial software, available for download directly from developerWorks, build your next development project on Linux. 
+Discuss
+•	Check out developerWorks blogs and get involved in the developerWorks community. 
+About the author
+ 
+M. Tim Jones is an embedded software architect and the author of GNU/Linux Application Programming, AI Application Programming, and BSD Sockets Programming from a Multilanguage Perspective. His engineering background ranges from the development of kernels for geosynchronous spacecraft to embedded systems architecture and networking protocols development. Tim is a Consultant Engineer for Emulex Corp. in Longmont, Colorado.
+Comments
+________________________________________
+________________________________________
+
+1 comments | Add commentReport inappropriate content
+________________________________________
+Error in the Overview
+
+"At this stage, the second-stage boot loader checks the system hardware, enumerates the attached hardware devices, mounts the root device, and then loads the necessary kernel modules."
+
+It's the Linux kernel, not the boot loader.
+
+Introduction to Linux: 
+Prev
+Chapter 4. Processes	Next
+
+________________________________________
+4.2. Boot process, Init and shutdown
+4.2.1. Introduction
+One of the most powerful aspects of Linux concerns its open method of starting and stopping the operating system, where it loads specified programs using their particular configurations, permits you to change those configurations to control the boot process, and shuts down in a graceful and organized way.
+Beyond the question of controlling the boot or shutdown process, the open nature of Linux makes it much easier to determine the exact source of most problems associated with starting up or shutting down your system. A basic understanding of this process is quite beneficial to everybody who uses a Linux system.
+A lot of Linux systems use lilo, the LInux LOader for booting operating systems. We will only discuss GRUB, however, which is easier to use and more flexible. Should you need information about lilo, refer to the man pages and HOWTOs. Both systems support dual boot installations, we refer to the HOWTOs on this subject for practical examples and background information.
+4.2.2. The boot process
+When an x86 computer is booted, the processor looks at the end of the system memory for the BIOS (Basic Input/Output System) and runs it. The BIOS program is written into permanent read-only memory and is always available for use. The BIOS provides the lowest level interface to peripheral devices and controls the first step of the boot process.
+The BIOS tests the system, looks for and checks peripherals, and then looks for a drive to use to boot the system. Usually it checks the floppy drive (or CD-ROM drive on many newer systems) for bootable media, if present, and then it looks to the hard drive. The order of the drives used for booting is usually controlled by a particular BIOS setting on the system. Once Linux is installed on the hard drive of a system, the BIOS looks for a Master Boot Record (MBR) starting at the first sector on the first hard drive, loads its contents into memory, then passes control to it.
+This MBR contains instructions on how to load the GRUB (or LILO) boot-loader, using a pre-selected operating system. The MBR then loads the boot-loader, which takes over the process (if the boot-loader is installed in the MBR). In the default Red Hat Linux configuration, GRUB uses the settings in the MBR to display boot options in a menu. Once GRUB has received the correct instructions for the operating system to start, either from its command line or configuration file, it finds the necessary boot file and hands off control of the machine to that operating system.
+4.2.3. GRUB features
+This boot method is called direct loading because instructions are used to directly load the operating system, with no intermediary code between the boot-loaders and the operating system's main files (such as the kernel). The boot process used by other operating systems may differ slightly from the above, however. For example, Microsoft's DOS and Windows operating systems completely overwrite anything on the MBR when they are installed without incorporating any of the current MBR's configuration. This destroys any other information stored in the MBR by other operating systems, such as Linux. The Microsoft operating systems, as well as various other proprietary operating systems, are loaded using a chain loading boot method. With this method, the MBR points to the first sector of the partition holding the operating system, where it finds the special files necessary to actually boot that operating system.
+GRUB supports both boot methods, allowing you to use it with almost any operating system, most popular file systems, and almost any hard disk your BIOS can recognize.
+GRUB contains a number of other features; the most important include:
+•	GRUB provides a true command-based, pre-OS environment on x86 machines to allow maximum flexibility in loading operating systems with certain options or gathering information about the system.
+•	GRUB supports Logical Block Addressing (LBA) mode, needed to access many IDE and all SCSI hard disks. Before LBA, hard drives could encounter a 1024-cylinder limit, where the BIOS could not find a file after that point.
+•	GRUB's configuration file is read from the disk every time the system boots, preventing you from having to write over the MBR every time you change the boot options.
+A full description of GRUB may be found by issuing the info grub command or at the GRUB site. The Linux Documentation Project has a Multiboot with GRUB Mini-HOWTO.
+4.2.4. Init
+The kernel, once it is loaded, finds init in sbin and executes it.
+When init starts, it becomes the parent or grandparent of all of the processes that start up automatically on your Linux system. The first thing init does, is reading its initialization file, /etc/inittab. This instructs init to read an initial configuration script for the environment, which sets the path, starts swapping, checks the file systems, and so on. Basically, this step takes care of everything that your system needs to have done at system initialization: setting the clock, initializing serial ports and so forth.
+Then init continues to read the /etc/inittab file, which describes how the system should be set up in each run level and sets the default run level. A run level is a configuration of processes. All UNIX-like systems can be run in different process configurations, such as the single user mode, which is referred to as run level 1 or run level S (or s). In this mode, only the system administrator can connect to the system. It is used to perform maintenance tasks without risks of damaging the system or user data. Naturally, in this configuration we don't need to offer user services, so they will all be disabled. Another run level is the reboot run level, or run level 6, which shuts down all running services according to the appropriate procedures and then restarts the system.
+Use the who to check what your current run level is:
+willy@ubuntu:~$ who -r
+	run-level 2 2006-10-17 23:22		last=S
+More about run levels in the next section, see Section 4.2.5.
+After having determined the default run level for your system, init starts all of the background processes necessary for the system to run by looking in the appropriate rc directory for that run level. init runs each of the kill scripts (their file names start with a K) with a stop parameter. It then runs all of the start scripts (their file names start with an S) in the appropriate run level directory so that all services and applications are started correctly. In fact, you can execute these same scripts manually after the system is finished booting with a command like /etc/init.d/httpd stop or service httpd stop logged in as root, in this case stopping the web server.
+ 
+Special case
+ 	Note that on system startup, the scripts in rc2.d and rc3.d are usually executed. In that case, no services are stopped (at least not permanently). There are only services that are started.
+None of the scripts that actually start and stop the services are located in /etc/rc<x>.d. Rather, all of the files in /etc/rc<x>.d are symbolic links that point to the actual scripts located in /etc/init.d. A symbolic link is nothing more than a file that points to another file, and is used in this case because it can be created and deleted without affecting the actual scripts that kill or start the services. The symbolic links to the various scripts are numbered in a particular order so that they start in that order. You can change the order in which the services start up or are killed by changing the name of the symbolic link that refers to the script that actually controls the service. You can use the same number multiple times if you want a particular service started or stopped right before or after another service, as in the example below, listing the content of /etc/rc5.d, where crond and xfs are both started from a linkname starting with "S90". In this case, the scripts are started in alphabetical order.
+[jean@blub /etc/rc5.d] ls
+K15httpd@     K45named@    S08ipchains@  S25netfs@      S85gpm@
+K16rarpd@     K46radvd@    S08iptables@  S26apmd@       S90crond@
+K20nfs@       K61ldap@     S09isdn@      S28autofs@     S90xfs@
+K20rstatd@    K65identd@   S10network@   S30nscd@       S95anacron@
+K20rusersd@   K74ntpd@     S12syslog@    S55sshd@       S95atd@
+K20rwalld@    K74ypserv@   S13portmap@   S56rawdevices@ S97rhnsd@
+K20rwhod@     K74ypxfrd@   S14nfslock@   S56xinetd@     S99local@
+K25squid@     K89bcm5820@  S17keytable@  S60lpd@
+K34yppasswdd@  S05kudzu@    S20random@    S80sendmail@
+After init has progressed through the run levels to get to the default run level, the /etc/inittab script forks a getty process for each virtual console (login prompt in text mode). getty opens tty lines, sets their modes, prints the login prompt, gets the user's name, and then initiates a login process for that user. This allows users to authenticate themselves to the system and use it. By default, most systems offer 6 virtual consoles, but as you can see from the inittab file, this is configurable.
+/etc/inittab can also tell init how it should handle a user pressing Ctrl+Alt+Delete at the console. As the system should be properly shut down and restarted rather than immediately power-cycled, init is told to execute the command /sbin/shutdown -t3 -r now, for instance, when a user hits those keys. In addition, /etc/inittab states what init should do in case of power failures, if your system has a UPS unit attached to it.
+On most RPM-based systems the graphical login screen is started in run level 5, where /etc/inittab runs a script called /etc/X11/prefdm. The prefdm script runs the preferred X display manager, based on the contents of the /etc/sysconfig/desktop directory. This is typically gdm if you run GNOME or kdm if you run KDE, but they can be mixed, and there's also the xdm that comes with a standard X installation.
+But there are other possibilities as well. On Debian, for instance, there is an initscript for each of the display managers, and the content of the /etc/X11/default-display-manager is used to determine which one to start. More about the graphical interface can be read in Section 7.3. Ultimately, your system documentation will explain the details about the higher level aspects of init.
+The /etc/default and/or /etc/sysconfig directories contain entries for a range of functions and services, these are all read at boot time. The location of the directory containing system defaults might be somewhat different depending on your Linux distribution.
+Besides the graphical user environment, a lot of other services may be started as well. But if all goes well, you should be looking at a login prompt or login screen when the boot process has finished.
+ 
+Other procedures
+ 	We explained how SysV init works on x86 based machines. Startup procedures may vary on other architectures and distributions. Other systems may use the BSD-style init, where startup files are not split up into multiple /etc/rc<LEVEL>.d directories. It might also be possible that your system uses /etc/rc.d/init.d instead of /etc/init.d.
+4.2.5. Init run levels
+The idea behind operating different services at different run levels essentially revolves around the fact that different systems can be used in different ways. Some services cannot be used until the system is in a particular state, or mode, such as being ready for more than one user or having networking available.
+There are times in which you may want to operate the system in a lower mode. Examples are fixing disk corruption problems in run level 1 so no other users can possibly be on the system, or leaving a server in run level 3 without an X session running. In these cases, running services that depend upon a higher system mode to function does not make sense because they will not work correctly anyway. By already having each service assigned to start when its particular run level is reached, you ensure an orderly start up process, and you can quickly change the mode of the machine without worrying about which services to manually start or stop.
+Available run levels are generally described in /etc/inittab, which is partially shown below:
+#
+# inittab   This file describes how the INIT process should set up
+#           the system in a certain run-level.
+
+# Default run level. The run levels are:
+#   0 - halt (Do NOT set initdefault to this)
+#   1 - Single user mode
+#   2 - Multiuser, without NFS 
+#	(The same as 3, if you do not have networking)
+#   3 - Full multiuser mode
+#   4 - unused
+#   5 - X11
+#   6 - reboot (Do NOT set initdefault to this)
+# 
+id:5:initdefault:
+<--cut-->
+Feel free to configure unused run levels (commonly run level 4) as you see fit. Many users configure those run levels in a way that makes the most sense for them while leaving the standard run levels as they are by default. This allows them to quickly move in and out of their custom configuration without disturbing the normal set of features at the standard run levels.
+If your machine gets into a state where it will not boot due to a bad /etc/inittab or will not let you log in because you have a corrupted /etc/passwd file (or if you have simply forgotten your password), boot into single-user mode.
+ 
+No graphics?
+ 	When you are working in text mode because you didn't get presented a graphical login screen on the console of your machine, you can normally switch to console 7 or up to have a graphical login. If this is not the case, check the current run level using the command who -r. If it is set to something else than the original default from /etc/inittab, chances are that the system does not start up in graphical mode by default. Contact your system administrator or read man init in that case. Note that switching run levels is done preferably using the telinit command; switching from a text to a graphical console or vice versa does not involve a run level switch.
+The discussion of run levels, scripts and configurations in this guide tries to be as general as possible. Lots of variations exist. For instance, Gentoo Linux stores scripts in /etc/run levels. Other systems might first run through (a) lower run level(s) and execute all the scripts in there before arriving at the final run level and executing those scripts. Refer to your system documentation for more information. You might also read through the scripts that are refered to in /etc/inittab to get a better comprehension of what happens on your system.
+4.2.5.1. Tools
+The chkconfig or update-rc.d utilities, when installed on your system, provide a simple command-line tool for maintaining the /etc/init.d directory hierarchy. These relieve system administrators from having to directly manipulate the numerous symbolic links in the directories under /etc/rc[x].d.
+In addition, some systems offer the ntsysv tool, which provides a text-based interface; you may find this easier to use than chkconfig's command-line interface. On SuSE Linux, you will find the yast and insserv tools. For Mandrake easy configuration, you may want to try DrakConf, which allows among other features switching between run levels 3 and 5. In Mandriva this became the Mandriva Linux Control Center.
+Most distributions provide a graphical user interface for configuring processes, check with your system documentation.
+All of these utilities must be run as root. The system administrator may also manually create the appropriate links in each run level directory in order to start or stop a service in a certain run level.
+4.2.6. Shutdown
+UNIX was not made to be shut down, but if you really must, use the shutdown command. After completing the shutdown procedure, the -h option will halt the system, while -r will reboot it.
+The reboot and halt commands are now able to invoke shutdown if run when the system is in run levels 1-5, and thus ensure proper shutdown of the system,but it is a bad habit to get into, as not all UNIX/Linux versions have this feature.
+If your computer does not power itself down, you should not turn off the computer until you see a message indicating that the system is halted or finished shutting down, in order to give the system the time to unmount all partitions. Being impatient may cause data loss.
+
